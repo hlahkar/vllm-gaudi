@@ -5,6 +5,7 @@ import vllm
 from vllm.config import get_current_vllm_config
 from vllm.model_executor.layers.fused_moe.layer import (FusedMoE, UnquantizedFusedMoEMethod)
 from vllm_gaudi.extension.ops import (VllmMixtureOfExpertsOp)
+from vllm.model_executor.utils import set_weight_attrs
 
 
 @UnquantizedFusedMoEMethod.register_oot
@@ -16,6 +17,7 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
         torch.hpu.synchronize()
         vllm_config = get_current_vllm_config()
         self.model_type = vllm_config.model_config.hf_config.model_type
+
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         super().process_weights_after_loading(layer)
         # custom handling for HPU
@@ -37,6 +39,70 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
             if has_bias:
                 layer.moe_op.w13_list[expert_id].set_bias(layer.w13_bias.data[expert_id])
                 layer.moe_op.w2_list[expert_id].set_bias(layer.w2_bias.data[expert_id])
+
+    def create_weights(self, layer: torch.nn.Module, num_experts: int,
+                       hidden_size: int, intermediate_size_per_partition: int,
+                       params_dtype: torch.dtype, **extra_weight_attrs):
+        if self.model_type in ["gpt_oss"]:
+            from vllm.utils import round_up
+            # Fused gate_up_proj (column parallel)
+            w13_weight = torch.nn.Parameter(
+                torch.zeros(
+                    num_experts,
+                    2 * round_up(intermediate_size_per_partition,32),
+                    hidden_size,
+                    # hidden_size,
+                    dtype=params_dtype),
+                requires_grad=False)
+            layer.register_parameter("w13_weight", w13_weight)
+            set_weight_attrs(w13_weight, extra_weight_attrs)
+
+            w13_bias = torch.nn.Parameter(torch.zeros(
+                num_experts,
+                2 * round_up(intermediate_size_per_partition,32),
+                dtype=params_dtype),
+                                          requires_grad=False)
+            layer.register_parameter("w13_bias", w13_bias)
+            set_weight_attrs(w13_bias, extra_weight_attrs)
+
+            # down_proj (row parallel)
+            w2_weight = torch.nn.Parameter(
+                torch.zeros(
+                    num_experts,
+                    # hidden_size,
+                    hidden_size,
+                    round_up(intermediate_size_per_partition, 32),
+                    dtype=params_dtype),
+                requires_grad=False)
+            layer.register_parameter("w2_weight", w2_weight)
+            set_weight_attrs(w2_weight, extra_weight_attrs)
+
+            w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
+                                                     hidden_size,
+                                                     dtype=params_dtype),
+                                         requires_grad=False)
+            layer.register_parameter("w2_bias", w2_bias)
+            set_weight_attrs(w2_bias, extra_weight_attrs)
+        else:
+            # Fused gate_up_proj (column parallel)
+            w13_weight = torch.nn.Parameter(torch.empty(
+                num_experts,
+                2 * intermediate_size_per_partition,
+                hidden_size,
+                dtype=params_dtype),
+                                            requires_grad=False)
+            layer.register_parameter("w13_weight", w13_weight)
+            set_weight_attrs(w13_weight, extra_weight_attrs)
+
+            # down_proj (row parallel)
+            w2_weight = torch.nn.Parameter(torch.empty(
+                num_experts,
+                hidden_size,
+                intermediate_size_per_partition,
+                dtype=params_dtype),
+                                           requires_grad=False)
+            layer.register_parameter("w2_weight", w2_weight)
+            set_weight_attrs(w2_weight, extra_weight_attrs)
 
     def forward_oot(
         self,
