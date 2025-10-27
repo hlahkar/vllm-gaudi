@@ -4,13 +4,18 @@ import vllm
 from vllm.entrypoints.llm import LLM
 import numpy as np
 
-RUN_20B_MODEL = True  # Set to False to run the 120B model instead
+RUN_20B_MODEL = False  # Set to False to run the 120B model instead
 MODEL_PATH = "lmsys/gpt-oss-20b-BF16"
-MODEL_PATH_120 = "lmsys/gpt-oss-120b-BF16"
+# MODEL_PATH_120 = "lmsys/gpt-oss-120b-BF16"
+MODEL_PATH_120 = "openai/gpt-oss-120b"
+
 # reference https://github.com/huggingface/transformers/blob/68eb1a9a6353911f491b1c8139eb73d052a8e9b9/tests/models/gpt_oss/test_modeling_gpt_oss.py#L397
 original_output = "Roses are red, violets are blue, I love you, and I love you too.\n\nRoses are red, vio"
 # reference https://github.com/huggingface/transformers/blob/68eb1a9a6353911f491b1c8139eb73d052a8e9b9/tests/models/gpt_oss/test_modeling_gpt_oss.py#L462
 original_output_120 = "Roses are red, violets are blue,\nI am a language model, not a human being"
+
+_pt_profile_env = os.getenv("PT_PROFILE", "0")
+PT_PROFILE = _pt_profile_env.lower() in ("1", "true", "yes", "on")
 
 def do_sample(llm: LLM, original_output: str, rtol: float, atol: float, max_num_seqs:int) -> list[str]:
     prompts = [
@@ -60,7 +65,7 @@ def _test_gpt_oss():
         llm = LLM(MODEL_PATH_120,
                         max_num_seqs=8,
                         dtype='bfloat16',
-                        enforce_eager=False,
+                        enforce_eager=True,
                         max_model_len=512,
                         max_num_batched_tokens=2048,
                         tensor_parallel_size=4,
@@ -71,3 +76,6 @@ def _test_gpt_oss():
 
 def test_gpt_oss_1x():
     _test_gpt_oss()
+
+if __name__ == "__main__":
+    test_gpt_oss_1x()

@@ -136,7 +136,9 @@ def _load_weights_mxfp4_dequantize_hpu(
             param = params_dict[block_name]
 
             weight = convert_moe_packed_tensors(block_weight, narrow_weight_scale).permute(0, 2, 1).contiguous()
-            param.copy_(weight)
+            # param.copy_(weight)
+            param[:, :2 * (tp_rank_end - tp_rank_start), :] = weight
+            print(f"copy params: {block_name} with shape {param.shape} and {weight.shape} and dtype {param.dtype} and {weight.dtype}")
             loaded_params.add(name)
             continue
         elif ".w13_weight" in name:
@@ -162,8 +164,9 @@ def _load_weights_mxfp4_dequantize_hpu(
             param = params_dict[block_name]
 
             weight = convert_moe_packed_tensors(block_weight, narrow_weight_scale).permute(0, 2, 1).contiguous()
-            param[:, :, :tp_rank_end - tp_rank_start] = weight
-
+            param[:, :, :(tp_rank_end - tp_rank_start)] = weight
+            # param.copy_(weight)
+            print(f"copy params: {block_name} with shape {param.shape} and {weight.shape} and dtype {param.dtype} and {weight.dtype}, and tp_rank_start {tp_rank_start}, tp_rank_end {tp_rank_end}")
             loaded_params.add(name)
             continue
         elif ".w2_weight" in name:
@@ -184,7 +187,9 @@ def _load_weights_mxfp4_dequantize_hpu(
             narrow_weight = narrow_weight.contiguous()
 
             param = params_dict[name]
-            param.copy_(narrow_weight)
+            print(f"copy params: {name} with shape {param.shape} and {narrow_weight.shape} and dtype {param.dtype} and {weight.dtype}, and tp_rank_start {tp_rank_start}, tp_rank_end {tp_rank_end}")
+            param[:, :2 * (tp_rank_end - tp_rank_start)] = narrow_weight
+            # param.copy_(narrow_weight)
             loaded_params.add(name)
             continue
         elif ".w2_bias" in name:
